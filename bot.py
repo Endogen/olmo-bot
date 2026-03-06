@@ -5,6 +5,8 @@ from __future__ import annotations
 import html
 import hashlib
 import logging
+import os
+import tempfile
 import textwrap
 from collections import defaultdict
 
@@ -26,6 +28,7 @@ from config import (
     DEFAULT_MODEL,
     MODELS,
     REQUEST_TIMEOUT,
+    VISION_MODELS,
     WEB2API_URL,
 )
 
@@ -62,8 +65,17 @@ async def check_access(update: Update) -> bool:
 # Web2API query
 # ---------------------------------------------------------------------------
 
-async def query_model(model: str, prompt: str, history: list[dict] | None = None) -> str:
-    """Send a prompt to web2api and return the response text."""
+async def query_model(
+    model: str,
+    prompt: str,
+    history: list[dict] | None = None,
+    file_path: str | None = None,
+) -> str:
+    """Send a prompt to web2api and return the response text.
+
+    If *file_path* is given the request is sent as multipart POST so the
+    scraper can forward the file to vision models like Molmo 2.
+    """
     endpoint = MODELS.get(model)
     if not endpoint:
         return f"Unknown model: {model}"
@@ -83,10 +95,17 @@ async def query_model(model: str, prompt: str, history: list[dict] | None = None
         full_prompt = "\n\n".join(parts)
 
     url = f"{WEB2API_URL}{endpoint}"
-    params = {"q": full_prompt}
 
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
-        resp = await client.get(url, params=params)
+        if file_path:
+            # POST multipart with file
+            import mimetypes
+            mime = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
+            with open(file_path, "rb") as f:
+                files = [("files", (file_path.split("/")[-1], f, mime))]
+                resp = await client.post(url, params={"q": full_prompt}, files=files)
+        else:
+            resp = await client.get(url, params={"q": full_prompt})
         resp.raise_for_status()
         data = resp.json()
 
@@ -120,10 +139,13 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"/olmo7b — OLMo 3 7B Instruct\n"
         f"/tulu8b — Tülu 3 8B\n"
         f"/tulu70b — Tülu 3 70B\n"
+        f"/molmo2 — Molmo 2 8B (vision: images & video)\n"
+        f"/molmo2track — Molmo 2 8B 8fps tracking\n"
         f"/models — list available models\n"
         f"/memory — toggle conversation memory\n"
         f"/clear — clear memory history\n"
-        f"/status — current settings",
+        f"/status — current settings\n\n"
+        f"📷 <b>Vision:</b> Send a photo or video with a caption to analyze it with Molmo 2.",
         parse_mode=ParseMode.HTML,
     )
 
@@ -165,6 +187,12 @@ async def cmd_tulu8b(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 async def cmd_tulu70b(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await cmd_set_model("tulu-70b", update)
+
+async def cmd_molmo2(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await cmd_set_model("molmo2", update)
+
+async def cmd_molmo2track(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await cmd_set_model("molmo2-track", update)
 
 
 async def cmd_memory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -212,6 +240,74 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         f"History: <code>{hist_len} turns</code>",
         parse_mode=ParseMode.HTML,
     )
+
+
+async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle photos and videos — forward to Molmo 2 vision model."""
+    if not await check_access(update):
+        return
+
+    uid = update.effective_user.id
+    model = user_model[uid]
+    msg = update.message
+
+    # Auto-switch to molmo2 if current model doesn't support vision
+    if model not in VISION_MODELS:
+        model = "molmo2"
+
+    # Get the caption as the prompt, or use a default
+    prompt = msg.caption or "Describe this image in detail."
+
+    # Determine the file to download
+    if msg.photo:
+        file_obj = await msg.photo[-1].get_file()  # highest resolution
+        ext = ".jpg"
+    elif msg.video:
+        file_obj = await msg.video.get_file()
+        ext = ".mp4"
+    elif msg.document and msg.document.mime_type and (
+        msg.document.mime_type.startswith("image/") or
+        msg.document.mime_type.startswith("video/")
+    ):
+        file_obj = await msg.document.get_file()
+        ext = os.path.splitext(msg.document.file_name or "file")[1] or ".bin"
+    else:
+        await msg.reply_text("⚠️ Unsupported file type. Send an image or video.")
+        return
+
+    await msg.chat.send_action(ChatAction.TYPING)
+
+    tmp_path = None
+    try:
+        # Download to temp file
+        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+            tmp_path = tmp.name
+            await file_obj.download_to_drive(tmp_path)
+
+        mem_on = user_memory_enabled.get(uid, False)
+        history = user_history[uid] if mem_on else None
+        answer = await query_model(model, prompt, history, file_path=tmp_path)
+
+        if mem_on:
+            user_history[uid].append({"role": "user", "text": f"[image/video] {prompt}"})
+            user_history[uid].append({"role": "assistant", "text": answer})
+            if len(user_history[uid]) > MAX_HISTORY * 2:
+                user_history[uid] = user_history[uid][-(MAX_HISTORY * 2):]
+
+        if len(answer) <= 4096:
+            await msg.reply_text(answer)
+        else:
+            for i in range(0, len(answer), 4096):
+                await msg.reply_text(answer[i:i + 4096])
+
+    except httpx.ReadTimeout:
+        await msg.reply_text("⏳ Request timed out. Vision analysis can be slow — try again.")
+    except Exception as e:
+        logger.exception("Media handling error")
+        await msg.reply_text(f"❌ Error: {html.escape(str(e))}")
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -315,9 +411,12 @@ def main() -> None:
     app.add_handler(CommandHandler("olmo7b", cmd_olmo7b))
     app.add_handler(CommandHandler("tulu8b", cmd_tulu8b))
     app.add_handler(CommandHandler("tulu70b", cmd_tulu70b))
+    app.add_handler(CommandHandler("molmo2", cmd_molmo2))
+    app.add_handler(CommandHandler("molmo2track", cmd_molmo2track))
     app.add_handler(CommandHandler("memory", cmd_memory))
     app.add_handler(CommandHandler("clear", cmd_clear))
     app.add_handler(CommandHandler("status", cmd_status))
+    app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | (filters.Document.IMAGE | filters.Document.VIDEO), handle_media))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(InlineQueryHandler(handle_inline))
 

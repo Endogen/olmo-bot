@@ -22,7 +22,12 @@ MODELS = {
     "olmo-7b": "/allenai/olmo-7b",
     "tulu-8b": "/allenai/tulu-8b",
     "tulu-70b": "/allenai/tulu-70b",
+    "molmo2": "/allenai/molmo2",
+    "molmo2-track": "/allenai/molmo2-track",
 }
+
+# Models that support image/video input
+VISION_MODELS = {"molmo2", "molmo2-track"}
 
 DEFAULT_MODEL = "olmo-32b"
 
