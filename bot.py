@@ -32,6 +32,7 @@ from config import (
     VISION_MODELS,
     WEB2API_URL,
 )
+from pointing import draw_points_on_image, has_points, parse_points, strip_points
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -284,6 +285,7 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await msg.chat.send_action(ChatAction.TYPING)
 
     tmp_path = None
+    pointed_path = None
     try:
         # Download to temp file
         with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
@@ -300,11 +302,36 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             if len(user_history[uid]) > MAX_HISTORY * 2:
                 user_history[uid] = user_history[uid][-(MAX_HISTORY * 2):]
 
-        if len(answer) <= 4096:
-            await msg.reply_text(answer)
-        else:
-            for i in range(0, len(answer), 4096):
-                await msg.reply_text(answer[i:i + 4096])
+        # Check if the response contains pointing data
+        pointed_path = None
+        if has_points(answer) and tmp_path and ext in (".jpg", ".jpeg", ".png", ".webp"):
+            try:
+                groups = parse_points(answer)
+                if groups:
+                    pointed_path = tmp_path.rsplit(".", 1)[0] + "_pointed.jpg"
+                    pointed_path, caption = draw_points_on_image(
+                        tmp_path, groups, output_path=pointed_path,
+                    )
+                    # Send annotated image with caption
+                    with open(pointed_path, "rb") as photo:
+                        await msg.reply_photo(
+                            photo=photo,
+                            caption=caption[:1024] if caption else None,
+                        )
+                    # Also send the text response with tags stripped
+                    clean_text = strip_points(answer)
+                    if clean_text and clean_text != caption:
+                        await msg.reply_text(clean_text)
+            except Exception:
+                logger.exception("Point overlay failed, sending text only")
+                pointed_path = None
+
+        if not pointed_path:
+            if len(answer) <= 4096:
+                await msg.reply_text(answer)
+            else:
+                for i in range(0, len(answer), 4096):
+                    await msg.reply_text(answer[i:i + 4096])
 
     except httpx.ReadTimeout:
         await msg.reply_text("⏳ Request timed out. Vision analysis can be slow — try again.")
@@ -314,6 +341,8 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
+        if pointed_path and os.path.exists(pointed_path):
+            os.unlink(pointed_path)
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
