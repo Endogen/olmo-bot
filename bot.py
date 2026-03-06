@@ -197,6 +197,7 @@ async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("🗑 History cleared.")
 
 
+
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await check_access(update):
         return
