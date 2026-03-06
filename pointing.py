@@ -91,45 +91,105 @@ def strip_points(text: str) -> str:
     return _POINTS_RE.sub(r"\2", text).strip()
 
 
+def _make_marker(
+    color: tuple[int, int, int],
+    radius: int,
+    label: str | None,
+    *,
+    scale: int = 4,
+) -> Image.Image:
+    """Render a single anti-aliased point marker via supersampling.
+
+    Draws at *scale*× resolution then downscales with LANCZOS for smooth edges.
+    """
+    sr = radius * scale  # supersampled radius
+    pad = 4 * scale      # padding for outer glow/border
+    size = (sr + pad) * 2
+    marker = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(marker)
+    cx = cy = size // 2
+
+    # Soft outer glow
+    draw.ellipse(
+        [cx - sr - pad // 2, cy - sr - pad // 2,
+         cx + sr + pad // 2, cy + sr + pad // 2],
+        fill=(0, 0, 0, 50),
+    )
+
+    # White border ring
+    border = 3 * scale
+    draw.ellipse(
+        [cx - sr - border, cy - sr - border,
+         cx + sr + border, cy + sr + border],
+        fill=(255, 255, 255, 240),
+    )
+
+    # Main colored circle
+    draw.ellipse(
+        [cx - sr, cy - sr, cx + sr, cy + sr],
+        fill=(*color, 230),
+    )
+
+    # Draw number label
+    if label:
+        font = None
+        font_size = int(sr * 1.3)
+        for font_name in (
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+        ):
+            if Path(font_name).exists():
+                try:
+                    font = ImageFont.truetype(font_name, font_size)
+                except Exception:
+                    pass
+                break
+
+        # Dark shadow for contrast (anchor="mm" = middle-middle centering)
+        for ox, oy in [(1, 1), (-1, 1), (1, -1), (-1, -1)]:
+            off = 2 * scale
+            draw.text(
+                (cx + ox * off, cy + oy * off),
+                label,
+                fill=(0, 0, 0, 120),
+                font=font,
+                anchor="mm",
+            )
+
+        # White text, perfectly centered
+        draw.text((cx, cy), label, fill=(255, 255, 255, 255), font=font, anchor="mm")
+
+    # Downscale to target size with LANCZOS for smooth anti-aliasing
+    final_size = size // scale
+    marker = marker.resize((final_size, final_size), Image.LANCZOS)
+    return marker
+
+
 def draw_points_on_image(
     image_path: str,
     groups: list[PointGroup],
     *,
     dot_radius: int | None = None,
     output_path: str | None = None,
-) -> str:
+) -> tuple[str, str]:
     """Draw colored point markers on an image and save it.
 
-    Returns the path to the annotated image.
+    Returns (output_path, caption).
     """
-    img = Image.open(image_path).convert("RGB")
+    img = Image.open(image_path).convert("RGBA")
     w, h = img.size
 
     # Auto-scale dot size based on image dimensions
     if dot_radius is None:
-        dot_radius = max(8, min(w, h) // 60)
-
-    draw = ImageDraw.Draw(img, "RGBA")
-
-    # Try to load a font for labels
-    font = None
-    font_size = max(14, dot_radius)
-    for font_name in (
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
-    ):
-        if Path(font_name).exists():
-            try:
-                font = ImageFont.truetype(font_name, font_size)
-            except Exception:
-                pass
-            break
+        dot_radius = max(10, min(w, h) // 50)
 
     all_points = []
     for group in groups:
         for pt in group.points:
             all_points.append((pt, group.label))
+
+    show_numbers = len(all_points) > 1
 
     for i, (pt, label) in enumerate(all_points):
         color = POINT_COLORS[i % len(POINT_COLORS)]
@@ -137,58 +197,30 @@ def draw_points_on_image(
         # Convert from 0–1000 to pixel coordinates
         px = int(pt.x / COORD_SCALE * w)
         py = int(pt.y / COORD_SCALE * h)
-
-        # Clamp to image bounds
         px = max(0, min(w - 1, px))
         py = max(0, min(h - 1, py))
 
-        r = dot_radius
+        number = str(i + 1) if show_numbers else None
+        marker = _make_marker(color, dot_radius, number)
+        mw, mh = marker.size
 
-        # Draw outer ring (semi-transparent white for visibility)
-        draw.ellipse(
-            [px - r - 3, py - r - 3, px + r + 3, py + r + 3],
-            fill=(*color, 60),
-            outline=(255, 255, 255, 200),
-            width=3,
-        )
-
-        # Draw solid inner dot
-        draw.ellipse(
-            [px - r, py - r, px + r, py + r],
-            fill=(*color, 220),
-            outline=(255, 255, 255, 255),
-            width=2,
-        )
-
-        # Draw label if multiple points
-        if len(all_points) > 1:
-            tag = f"{i + 1}"
-            # Draw number in the center of the dot
-            bbox = draw.textbbox((0, 0), tag, font=font)
-            tw = bbox[2] - bbox[0]
-            th = bbox[3] - bbox[1]
-            tx = px - tw // 2
-            ty = py - th // 2 - 1
-            # Text shadow
-            draw.text((tx + 1, ty + 1), tag, fill=(0, 0, 0, 180), font=font)
-            draw.text((tx, ty), tag, fill=(255, 255, 255, 255), font=font)
+        # Paste marker centered on the point
+        img.paste(marker, (px - mw // 2, py - mh // 2), marker)
 
     # Build caption
     unique_labels = list(dict.fromkeys(label for _, label in all_points))
     if len(all_points) == 1:
         caption = unique_labels[0]
     elif len(unique_labels) == 1:
-        # All points share the same label (e.g. "eyes")
         caption = f"📍 {unique_labels[0]} ({len(all_points)} points)"
     else:
-        # Different labels — number them
         caption = "\n".join(
             f"📍 {i + 1}. {label}" for i, (_, label) in enumerate(all_points)
         )
 
-    # Save
+    # Save as RGB JPEG
     if output_path is None:
         output_path = image_path.rsplit(".", 1)[0] + "_pointed.jpg"
 
-    img.save(output_path, "JPEG", quality=92)
+    img.convert("RGB").save(output_path, "JPEG", quality=92)
     return output_path, caption
