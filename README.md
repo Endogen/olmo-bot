@@ -1,10 +1,12 @@
 # OLMo Telegram Bot
 
-A Telegram bot that interfaces with [Allen AI](https://playground.allenai.org/) language models (OLMo, Tülu) via [Web2API](https://github.com/Endogen/web2api).
+A Telegram bot that interfaces with [Allen AI](https://playground.allenai.org/) language models (OLMo, Tülu, Molmo) via [Web2API](https://github.com/Endogen/web2api).
 
 ## Features
 
 - **Multiple models** — OLMo 3.1 32B, OLMo 32B Think (reasoning), OLMo 7B, Tülu 8B, Tülu 70B
+- **Vision** — Molmo 2 8B for image and video understanding
+- **Auto-switch** — sending a photo or video automatically switches to Molmo 2 if the current model doesn't support vision
 - **Inline mode** — use `@your_bot query` in any chat
 - **Conversation memory** — optional per-user chat history (off by default)
 - **Access control** — restrict to specific Telegram user IDs
@@ -19,6 +21,8 @@ A Telegram bot that interfaces with [Allen AI](https://playground.allenai.org/) 
 | `/olmo7b` | Switch to OLMo 3 7B Instruct |
 | `/tulu8b` | Switch to Tülu 3 8B |
 | `/tulu70b` | Switch to Tülu 3 70B |
+| `/molmo2` | Switch to Molmo 2 8B (vision: images & video) |
+| `/molmo2track` | Switch to Molmo 2 8B 8fps tracking |
 | `/models` | List available models |
 | `/memory` | Toggle conversation memory |
 | `/memory enable` | Enable memory |
@@ -27,6 +31,15 @@ A Telegram bot that interfaces with [Allen AI](https://playground.allenai.org/) 
 | `/status` | Show current settings |
 
 Any regular message is sent to the currently selected model.
+
+### Vision (Images & Video)
+
+Send a **photo or video with a caption** and the bot will analyze it using Molmo 2:
+
+- The caption is used as the prompt (e.g. "What's in this image?")
+- If no caption is provided, it defaults to "Describe this image in detail."
+- If the current model doesn't support vision, the bot **automatically switches to Molmo 2** for that message
+- Supports photos, videos, and image/video file attachments
 
 ## Setup
 
