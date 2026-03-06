@@ -1,11 +1,13 @@
 # OLMo Telegram Bot
 
-A Telegram bot that interfaces with [Allen AI](https://playground.allenai.org/) language models (OLMo, Tülu, Molmo) via [Web2API](https://github.com/Endogen/web2api).
+A Telegram bot that interfaces with [Allen AI](https://playground.allenai.org/) language and vision models via [Web2API](https://github.com/Endogen/web2api).
 
 ## Features
 
 - **Multiple models** — OLMo 3.1 32B, OLMo 32B Think (reasoning), OLMo 7B, Tülu 8B, Tülu 70B
 - **Vision** — Molmo 2 8B for image and video understanding
+- **Point overlay** — ask Molmo 2 to point at objects and get an annotated image back with colored markers
+- **Web search** — all text models can search the web via Brave Search when they need current info
 - **Auto-switch** — sending a photo or video automatically switches to Molmo 2 if the current model doesn't support vision
 - **Inline mode** — use `@your_bot query` in any chat
 - **Conversation memory** — optional per-user chat history (off by default)
@@ -25,14 +27,12 @@ A Telegram bot that interfaces with [Allen AI](https://playground.allenai.org/) 
 | `/molmo2track` | Switch to Molmo 2 8B 8fps tracking |
 | `/models` | List available models |
 | `/memory` | Toggle conversation memory |
-| `/memory enable` | Enable memory |
-| `/memory disable` | Disable memory |
 | `/clear` | Clear conversation history |
 | `/status` | Show current settings |
 
 Any regular message is sent to the currently selected model.
 
-### Vision (Images & Video)
+## Vision (Molmo 2)
 
 Send a **photo or video with a caption** and the bot will analyze it using Molmo 2:
 
@@ -40,6 +40,24 @@ Send a **photo or video with a caption** and the bot will analyze it using Molmo
 - If no caption is provided, it defaults to "Describe this image in detail."
 - If the current model doesn't support vision, the bot **automatically switches to Molmo 2** for that message
 - Supports photos, videos, and image/video file attachments
+
+### Point Overlay
+
+Ask Molmo 2 to **point at objects** and the bot draws colored markers on the original image:
+
+- **"Point to the eyes"** → annotated image with numbered red/blue dots on each eye
+- **"Find the cat"** → single marker on the detected object
+- **"Show me where the people are"** → multiple numbered markers
+
+Markers are smooth and anti-aliased (4× supersampled with LANCZOS downscaling), auto-scaled to image size, with white borders and numbered labels for multiple points.
+
+Prompts that trigger pointing: `Point to...`, `Find the...`, `Where is the...`, `Show me where...`, `Locate the...`
+
+## Web Search
+
+All text models have access to [Brave Search](https://search.brave.com/) via the [Web2API MCP bridge](https://github.com/Endogen/web2api#mcp-tools). The model decides autonomously whether to search the web based on the query.
+
+Configure the tool bridge URL via the `OLMO_TOOLS_URL` environment variable.
 
 ## Setup
 
@@ -71,6 +89,7 @@ cp .env.example .env
 | `OLMO_BOT_TOKEN` | Yes | Telegram bot token |
 | `OLMO_ALLOWED_USERS` | No | Comma-separated Telegram user IDs (empty = allow all) |
 | `OLMO_WEB2API_URL` | No | Web2API URL (default: `http://127.0.0.1:8010`) |
+| `OLMO_TOOLS_URL` | No | MCP bridge URL for web search (default: container-internal brave-search endpoint) |
 
 ### Run
 
