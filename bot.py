@@ -318,9 +318,13 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                             photo=photo,
                             caption=caption[:1024] if caption else None,
                         )
-                    # Also send the text response with tags stripped
+                    # Only send extra text if there's substantial content
+                    # beyond the point labels themselves
                     clean_text = strip_points(answer)
-                    if clean_text and clean_text != caption:
+                    all_labels = {
+                        g.label.lower() for g in groups
+                    }
+                    if clean_text and clean_text.lower().strip() not in all_labels:
                         await msg.reply_text(clean_text)
             except Exception:
                 logger.exception("Point overlay failed, sending text only")
