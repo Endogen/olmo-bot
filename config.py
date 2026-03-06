@@ -31,5 +31,11 @@ VISION_MODELS = {"molmo2", "molmo2-track"}
 
 DEFAULT_MODEL = "olmo-32b"
 
+# Default MCP tools URL passed to models (scraped inside Docker container)
+# Uses container-internal port 8000, filtered to brave-search only
+DEFAULT_TOOLS_URL = os.environ.get(
+    "OLMO_TOOLS_URL", "http://127.0.0.1:8000/mcp/only/brave-search"
+)
+
 # Request timeout (scraping can be slow)
 REQUEST_TIMEOUT = 120

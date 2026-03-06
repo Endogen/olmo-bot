@@ -26,6 +26,7 @@ from config import (
     ALLOWED_USERS,
     BOT_TOKEN,
     DEFAULT_MODEL,
+    DEFAULT_TOOLS_URL,
     MODELS,
     REQUEST_TIMEOUT,
     VISION_MODELS,
@@ -96,16 +97,21 @@ async def query_model(
 
     url = f"{WEB2API_URL}{endpoint}"
 
+    # Build query params — always include tools_url for web search access
+    params: dict[str, str] = {"q": full_prompt}
+    if DEFAULT_TOOLS_URL and model not in VISION_MODELS:
+        params["tools_url"] = DEFAULT_TOOLS_URL
+
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         if file_path:
-            # POST multipart with file
+            # POST multipart with file (vision models don't need tools)
             import mimetypes
             mime = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
             with open(file_path, "rb") as f:
                 files = [("files", (file_path.split("/")[-1], f, mime))]
-                resp = await client.post(url, params={"q": full_prompt}, files=files)
+                resp = await client.post(url, params=params, files=files)
         else:
-            resp = await client.get(url, params={"q": full_prompt})
+            resp = await client.get(url, params=params)
         resp.raise_for_status()
         data = resp.json()
 
