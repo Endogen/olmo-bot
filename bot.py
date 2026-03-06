@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import html
-import hashlib
 import logging
 import os
 import tempfile
@@ -11,13 +10,12 @@ import textwrap
 from collections import defaultdict
 
 import httpx
-from telegram import InlineQueryResultArticle, InputTextMessageContent, Update
+from telegram import Update
 from telegram.constants import ChatAction, ParseMode
 from telegram.ext import (
     Application,
     CommandHandler,
     ContextTypes,
-    InlineQueryHandler,
     MessageHandler,
     filters,
 )
@@ -152,7 +150,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"/memory — toggle conversation memory\n"
         f"/clear — clear memory history\n"
         f"/status — current settings\n\n"
-        f"📷 <b>Vision:</b> Send a photo or video with a caption to analyze it with Molmo 2.",
+        f"📷 <b>Vision:</b> Send a photo or video with a caption to analyze it with Molmo 2.\n"
+        f"🎯 <b>Pointing:</b> Use captions like \"Point to the eyes\" to get annotated images.",
         parse_mode=ParseMode.HTML,
     )
 
@@ -396,46 +395,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 # ---------------------------------------------------------------------------
-# Inline mode
-# ---------------------------------------------------------------------------
-
-async def handle_inline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.inline_query
-    if not is_allowed(query.from_user.id):
-        return
-
-    prompt = query.query.strip()
-    if not prompt:
-        return
-
-    uid = query.from_user.id
-    model = user_model[uid]
-
-    try:
-        answer = await query_model(model, prompt)
-    except Exception as e:
-        logger.exception("Inline query error")
-        answer = f"Error: {e}"
-
-    # Truncate for inline result description
-    description = answer[:200] + "…" if len(answer) > 200 else answer
-    result_id = hashlib.md5(f"{prompt}:{answer[:100]}".encode()).hexdigest()
-
-    results = [
-        InlineQueryResultArticle(
-            id=result_id,
-            title=f"OLMo ({model})",
-            description=description,
-            input_message_content=InputTextMessageContent(
-                message_text=answer[:4096],
-            ),
-        )
-    ]
-
-    await query.answer(results, cache_time=0, is_personal=True)
-
-
-# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -457,7 +416,6 @@ def main() -> None:
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | (filters.Document.IMAGE | filters.Document.VIDEO), handle_media))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.add_handler(InlineQueryHandler(handle_inline))
 
     logger.info("Starting OLMo bot (allowed users: %s)", ALLOWED_USERS or "all")
     app.run_polling(drop_pending_updates=True)

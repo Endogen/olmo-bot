@@ -9,7 +9,6 @@ A Telegram bot that interfaces with [Allen AI](https://playground.allenai.org/) 
 - **Point overlay** — ask Molmo 2 to point at objects and get an annotated image back with colored markers
 - **Web search** — all text models can search the web via Brave Search when they need current info
 - **Auto-switch** — sending a photo or video automatically switches to Molmo 2 if the current model doesn't support vision
-- **Inline mode** — use `@your_bot query` in any chat
 - **Conversation memory** — optional per-user chat history (off by default)
 - **Access control** — restrict to specific Telegram user IDs
 
@@ -96,16 +95,6 @@ cp .env.example .env
 ```bash
 python bot.py
 ```
-
-### Inline Mode
-
-To enable inline mode, tell [@BotFather](https://t.me/BotFather):
-
-1. `/setinline`
-2. Select your bot
-3. Set a placeholder like `Ask OLMo...`
-
-Then type `@your_bot your question` in any Telegram chat.
 
 ### Systemd Service (Optional)
 
