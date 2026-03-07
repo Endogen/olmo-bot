@@ -34,7 +34,7 @@ DEFAULT_MODEL = "olmo-32b"
 # Default MCP tools URL passed to models (scraped inside Docker container)
 # Uses container-internal port 8000, filtered to brave-search only
 DEFAULT_TOOLS_URL = os.environ.get(
-    "OLMO_TOOLS_URL", "http://127.0.0.1:8000/mcp/only/brave-search"
+    "OLMO_TOOLS_URL", "http://127.0.0.1:8000/mcp/only/brave-search,web-reader"
 )
 
 # Request timeout (scraping can be slow)
