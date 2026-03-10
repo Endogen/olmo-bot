@@ -29,6 +29,9 @@ MODELS = {
 # Models that support image/video input
 VISION_MODELS = {"molmo2", "molmo2-track"}
 
+# Models that support tool calling (web search)
+TOOL_MODELS = {"olmo-32b", "olmo-7b"}
+
 DEFAULT_MODEL = "olmo-32b"
 
 # Default MCP tools URL passed to models (scraped inside Docker container)

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import html
 import logging
 import os
 import tempfile
 import textwrap
 from collections import defaultdict
+from contextlib import asynccontextmanager
 
 import httpx
 from telegram import Update
@@ -27,6 +29,7 @@ from config import (
     DEFAULT_TOOLS_URL,
     MODELS,
     REQUEST_TIMEOUT,
+    TOOL_MODELS,
     VISION_MODELS,
     WEB2API_URL,
 )
@@ -44,6 +47,34 @@ user_memory_enabled: dict[int, bool] = {}
 user_history: dict[int, list[dict]] = defaultdict(list)
 
 MAX_HISTORY = 20  # max turns to keep
+
+
+# ---------------------------------------------------------------------------
+# Typing indicator
+# ---------------------------------------------------------------------------
+
+@asynccontextmanager
+async def keep_typing(chat):
+    """Send typing indicator every 4 seconds until the block exits."""
+    stop = asyncio.Event()
+
+    async def _loop():
+        while not stop.is_set():
+            try:
+                await chat.send_action(ChatAction.TYPING)
+            except Exception:
+                pass
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=4)
+            except asyncio.TimeoutError:
+                pass
+
+    task = asyncio.create_task(_loop())
+    try:
+        yield
+    finally:
+        stop.set()
+        await task
 
 
 # ---------------------------------------------------------------------------
@@ -283,8 +314,6 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await msg.reply_text("⚠️ Unsupported file type. Send an image or video.")
         return
 
-    await msg.chat.send_action(ChatAction.TYPING)
-
     tmp_path = None
     pointed_path = None
     try:
@@ -295,7 +324,8 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         mem_on = user_memory_enabled.get(uid, False)
         history = user_history[uid] if mem_on else None
-        answer = await query_model(model, prompt, history, file_path=tmp_path)
+        async with keep_typing(msg.chat):
+            answer = await query_model(model, prompt, history, file_path=tmp_path)
 
         if mem_on:
             user_history[uid].append({"role": "user", "text": f"[image/video] {prompt}"})
@@ -362,15 +392,15 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     model = user_model[uid]
-    if model in VISION_MODELS:
-        model = DEFAULT_MODEL  # vision models don't support tools
+    if model not in TOOL_MODELS:
+        model = DEFAULT_MODEL  # only certain models support tool calling
 
     mem_on = user_memory_enabled.get(uid, False)
-    await update.message.chat.send_action(ChatAction.TYPING)
 
     try:
-        history = user_history[uid] if mem_on else None
-        answer = await query_model(model, query, history, use_tools=True)
+        async with keep_typing(update.message.chat):
+            history = user_history[uid] if mem_on else None
+            answer = await query_model(model, query, history, use_tools=True)
 
         if mem_on:
             user_history[uid].append({"role": "user", "text": query})
@@ -406,12 +436,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     model = user_model[uid]
     mem_on = user_memory_enabled.get(uid, False)
 
-    # Send typing indicator
-    await update.message.chat.send_action(ChatAction.TYPING)
-
     try:
-        history = user_history[uid] if mem_on else None
-        answer = await query_model(model, prompt, history)
+        async with keep_typing(update.message.chat):
+            history = user_history[uid] if mem_on else None
+            answer = await query_model(model, prompt, history)
 
         # Store in history if memory enabled
         if mem_on:
