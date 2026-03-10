@@ -24,6 +24,7 @@ A Telegram bot that interfaces with [Allen AI](https://playground.allenai.org/) 
 | `/tulu70b` | Switch to Tülu 3 70B |
 | `/molmo2` | Switch to Molmo 2 8B (vision: images & video) |
 | `/molmo2track` | Switch to Molmo 2 8B 8fps tracking |
+| `/search <query>` | Web search via Brave Search (uses a tool-capable model) |
 | `/models` | List available models |
 | `/memory` | Toggle conversation memory |
 | `/clear` | Clear conversation history |
@@ -54,7 +55,7 @@ Prompts that trigger pointing: `Point to...`, `Find the...`, `Where is the...`, 
 
 ## Web Search
 
-All text models have access to [Brave Search](https://search.brave.com/) via the [Web2API MCP bridge](https://github.com/Endogen/web2api#mcp-tools). The model decides autonomously whether to search the web based on the query.
+Use `/search <query>` to search the web via [Brave Search](https://search.brave.com/) and the [Web2API MCP bridge](https://github.com/Endogen/web2api#mcp-tools). Only models that support Allen AI's native tool calling (`olmo-32b`, `olmo-7b`) can use search — if the current model doesn't support it, the bot automatically switches to `olmo-32b` for that query.
 
 Configure the tool bridge URL via the `OLMO_TOOLS_URL` environment variable.
 
