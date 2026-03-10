@@ -70,6 +70,7 @@ async def query_model(
     prompt: str,
     history: list[dict] | None = None,
     file_path: str | None = None,
+    use_tools: bool = False,
 ) -> str:
     """Send a prompt to web2api and return the response text.
 
@@ -96,9 +97,9 @@ async def query_model(
 
     url = f"{WEB2API_URL}{endpoint}"
 
-    # Build query params — always include tools_url for web search access
+    # Build query params — tools_url only when explicitly requested
     params: dict[str, str] = {"q": full_prompt}
-    if DEFAULT_TOOLS_URL and model not in VISION_MODELS:
+    if use_tools and DEFAULT_TOOLS_URL and model not in VISION_MODELS:
         params["tools_url"] = DEFAULT_TOOLS_URL
 
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
@@ -147,6 +148,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"/molmo2 — Molmo 2 8B (vision: images & video)\n"
         f"/molmo2track — Molmo 2 8B 8fps tracking\n"
         f"/models — list available models\n"
+        f"/search — web search (e.g. /search latest AI news)\n"
         f"/memory — toggle conversation memory\n"
         f"/clear — clear memory history\n"
         f"/status — current settings\n\n"
@@ -348,6 +350,50 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             os.unlink(pointed_path)
 
 
+async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Search the web via OLMo with tool calling enabled."""
+    if not await check_access(update):
+        return
+
+    uid = update.effective_user.id
+    query = " ".join(context.args) if context.args else ""
+    if not query:
+        await update.message.reply_text("Usage: /search <your question>")
+        return
+
+    model = user_model[uid]
+    if model in VISION_MODELS:
+        model = DEFAULT_MODEL  # vision models don't support tools
+
+    mem_on = user_memory_enabled.get(uid, False)
+    await update.message.chat.send_action(ChatAction.TYPING)
+
+    try:
+        history = user_history[uid] if mem_on else None
+        answer = await query_model(model, query, history, use_tools=True)
+
+        if mem_on:
+            user_history[uid].append({"role": "user", "text": query})
+            user_history[uid].append({"role": "assistant", "text": answer})
+            if len(user_history[uid]) > MAX_HISTORY * 2:
+                user_history[uid] = user_history[uid][-(MAX_HISTORY * 2):]
+
+        if len(answer) <= 4096:
+            await update.message.reply_text(answer)
+        else:
+            for i in range(0, len(answer), 4096):
+                await update.message.reply_text(answer[i:i + 4096])
+
+    except httpx.HTTPStatusError as e:
+        logger.error("HTTP error: %s", e)
+        await update.message.reply_text(f"❌ API error: {e.response.status_code}")
+    except httpx.ReadTimeout:
+        await update.message.reply_text("⏳ Search timed out — try again.")
+    except Exception as e:
+        logger.exception("Search error")
+        await update.message.reply_text(f"❌ Error: {html.escape(str(e))}")
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await check_access(update):
         return
@@ -413,6 +459,7 @@ def main() -> None:
     app.add_handler(CommandHandler("molmo2track", cmd_molmo2track))
     app.add_handler(CommandHandler("memory", cmd_memory))
     app.add_handler(CommandHandler("clear", cmd_clear))
+    app.add_handler(CommandHandler("search", cmd_search))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | (filters.Document.IMAGE | filters.Document.VIDEO), handle_media))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
