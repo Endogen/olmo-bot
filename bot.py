@@ -33,6 +33,7 @@ from config import (
     VISION_MODELS,
     WEB2API_URL,
 )
+from formatting import md_to_telegram_html
 from pointing import draw_points_on_image, has_points, parse_points, strip_points
 
 logging.basicConfig(
@@ -52,6 +53,19 @@ MAX_HISTORY = 20  # max turns to keep
 # ---------------------------------------------------------------------------
 # Typing indicator
 # ---------------------------------------------------------------------------
+
+async def send_formatted(msg, text: str) -> None:
+    """Send a message with markdown→HTML conversion, falling back to plain text."""
+    formatted = md_to_telegram_html(text)
+    chunks = [formatted[i:i + 4096] for i in range(0, len(formatted), 4096)]
+    for chunk in chunks:
+        try:
+            await msg.reply_text(chunk, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+        except Exception:
+            # If HTML parsing fails, send as plain text
+            plain = text[chunks.index(chunk) * 4096:(chunks.index(chunk) + 1) * 4096] if len(chunks) > 1 else text
+            await msg.reply_text(plain[:4096])
+
 
 @asynccontextmanager
 async def keep_typing(chat):
@@ -153,6 +167,15 @@ async def query_model(
 
     fields = items[0].get("fields", {})
     answer = fields.get("response") or fields.get("answer") or fields.get("text") or str(fields)
+
+    # OLMo sometimes generates fake follow-up conversations — truncate at first
+    # occurrence of a role marker that indicates hallucinated multi-turn output.
+    for marker in ("\nuser\n", "\nassistant\n", "\n<function_calls>"):
+        idx = answer.find(marker)
+        if idx > 0:
+            answer = answer[:idx].rstrip()
+            break
+
     return answer
 
 
@@ -362,11 +385,7 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 pointed_path = None
 
         if not pointed_path:
-            if len(answer) <= 4096:
-                await msg.reply_text(answer)
-            else:
-                for i in range(0, len(answer), 4096):
-                    await msg.reply_text(answer[i:i + 4096])
+            await send_formatted(msg, answer)
 
     except httpx.ReadTimeout:
         await msg.reply_text("⏳ Request timed out. Vision analysis can be slow — try again.")
@@ -408,11 +427,7 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             if len(user_history[uid]) > MAX_HISTORY * 2:
                 user_history[uid] = user_history[uid][-(MAX_HISTORY * 2):]
 
-        if len(answer) <= 4096:
-            await update.message.reply_text(answer)
-        else:
-            for i in range(0, len(answer), 4096):
-                await update.message.reply_text(answer[i:i + 4096])
+        await send_formatted(update.message, answer)
 
     except httpx.HTTPStatusError as e:
         logger.error("HTTP error: %s", e)
@@ -449,14 +464,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             if len(user_history[uid]) > MAX_HISTORY * 2:
                 user_history[uid] = user_history[uid][-(MAX_HISTORY * 2):]
 
-        # Telegram has a 4096 char limit
-        if len(answer) <= 4096:
-            await update.message.reply_text(answer)
-        else:
-            # Split into chunks
-            for i in range(0, len(answer), 4096):
-                chunk = answer[i:i + 4096]
-                await update.message.reply_text(chunk)
+        await send_formatted(update.message, answer)
 
     except httpx.HTTPStatusError as e:
         logger.error("HTTP error: %s", e)
