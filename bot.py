@@ -32,6 +32,7 @@ from config import (
     TOOL_MODELS,
     VISION_MODELS,
     WEB2API_URL,
+    WEB2API_TOKEN,
 )
 from formatting import md_to_telegram_html
 from pointing import draw_points_on_image, has_points, parse_points, strip_points
@@ -147,7 +148,11 @@ async def query_model(
     if use_tools and DEFAULT_TOOLS_URL and model not in VISION_MODELS:
         params["tools_url"] = DEFAULT_TOOLS_URL
 
-    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+    headers = {}
+    if WEB2API_TOKEN:
+        headers["Authorization"] = f"Bearer {WEB2API_TOKEN}"
+
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, headers=headers) as client:
         if file_path:
             # POST multipart with file (vision models don't need tools)
             import mimetypes

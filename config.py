@@ -12,8 +12,9 @@ ALLOWED_USERS = {
     if uid.strip()
 }
 
-# Web2API base URL
+# Web2API base URL and access token
 WEB2API_URL = os.environ.get("OLMO_WEB2API_URL", "http://127.0.0.1:8010")
+WEB2API_TOKEN = os.environ.get("OLMO_WEB2API_TOKEN", "")
 
 # Models mapped to web2api endpoints
 MODELS = {
