@@ -47,8 +47,20 @@ logger = logging.getLogger(__name__)
 user_model: dict[int, str] = defaultdict(lambda: DEFAULT_MODEL)
 user_memory_enabled: dict[int, bool] = {}
 user_history: dict[int, list[dict]] = defaultdict(list)
+user_images: dict[int, list[str]] = defaultdict(list)  # paths of previous images
 
 MAX_HISTORY = 20  # max turns to keep
+MAX_IMAGES = 5  # max previous images to keep
+
+def _clear_user_images(uid: int) -> None:
+    """Remove saved image files for a user."""
+    for p in user_images.get(uid, []):
+        try:
+            os.unlink(p)
+        except OSError:
+            pass
+    user_images[uid].clear()
+
 
 
 # ---------------------------------------------------------------------------
@@ -116,12 +128,13 @@ async def query_model(
     prompt: str,
     history: list[dict] | None = None,
     file_path: str | None = None,
+    file_paths: list[str] | None = None,
     use_tools: bool = False,
 ) -> str:
     """Send a prompt to web2api and return the response text.
 
-    If *file_path* is given the request is sent as multipart POST so the
-    scraper can forward the file to vision models like Molmo 2.
+    If *file_path* or *file_paths* is given the request is sent as multipart
+    POST so the scraper can forward files to vision models like Molmo 2.
     """
     endpoint = MODELS.get(model)
     if not endpoint:
@@ -152,14 +165,27 @@ async def query_model(
     if WEB2API_TOKEN:
         headers["Authorization"] = f"Bearer {WEB2API_TOKEN}"
 
+    # Collect all file paths to send
+    all_files = list(file_paths or [])
+    if file_path:
+        all_files.append(file_path)
+
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, headers=headers) as client:
-        if file_path:
-            # POST multipart with file (vision models don't need tools)
+        if all_files:
+            # POST multipart with file(s) (vision models don't need tools)
             import mimetypes
-            mime = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
-            with open(file_path, "rb") as f:
-                files = [("files", (file_path.split("/")[-1], f, mime))]
-                resp = await client.post(url, params=params, files=files)
+            upload_files = []
+            open_handles = []
+            try:
+                for i, fp in enumerate(all_files):
+                    mime = mimetypes.guess_type(fp)[0] or "application/octet-stream"
+                    fh = open(fp, "rb")
+                    open_handles.append(fh)
+                    upload_files.append(("files", (fp.split("/")[-1], fh, mime)))
+                resp = await client.post(url, params=params, files=upload_files)
+            finally:
+                for fh in open_handles:
+                    fh.close()
         else:
             resp = await client.get(url, params=params)
         resp.raise_for_status()
@@ -273,6 +299,7 @@ async def cmd_memory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     elif args and args[0].lower() == "disable":
         user_memory_enabled[uid] = False
         user_history[uid].clear()
+        _clear_user_images(uid)
         await update.message.reply_text("🧠 Memory <b>disabled</b> (history cleared)", parse_mode=ParseMode.HTML)
     else:
         # Toggle
@@ -280,6 +307,7 @@ async def cmd_memory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         user_memory_enabled[uid] = not current
         if not user_memory_enabled[uid]:
             user_history[uid].clear()
+            _clear_user_images(uid)
         state = "enabled" if user_memory_enabled[uid] else "disabled"
         await update.message.reply_text(f"🧠 Memory <b>{state}</b>", parse_mode=ParseMode.HTML)
 
@@ -289,6 +317,7 @@ async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     uid = update.effective_user.id
     user_history[uid].clear()
+    _clear_user_images(uid)
     await update.message.reply_text("🗑 History cleared.")
 
 
@@ -352,14 +381,48 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         mem_on = user_memory_enabled.get(uid, False)
         history = user_history[uid] if mem_on else None
+
+        # Build list of previous images to send alongside current one
+        prev_images = user_images[uid] if mem_on else []
+        # Filter out files that no longer exist
+        prev_images = [p for p in prev_images if os.path.exists(p)]
+        user_images[uid] = prev_images
+
+        # Annotate prompt with image ordering if there are previous images
+        if prev_images and ext in (".jpg", ".jpeg", ".png", ".webp"):
+            n = len(prev_images)
+            img_note = (
+                f"[You are receiving {n + 1} images. "
+                f"Images 1-{n} are previously sent images (oldest first). "
+                f"Image {n + 1} is the latest image just sent by the user.]\n\n"
+            )
+            full_prompt = img_note + prompt
+        else:
+            full_prompt = prompt
+
         async with keep_typing(msg.chat):
-            answer = await query_model(model, prompt, history, file_path=tmp_path)
+            answer = await query_model(
+                model, full_prompt, history,
+                file_path=tmp_path,
+                file_paths=prev_images if prev_images else None,
+            )
 
         if mem_on:
             user_history[uid].append({"role": "user", "text": f"[image/video] {prompt}"})
             user_history[uid].append({"role": "assistant", "text": answer})
             if len(user_history[uid]) > MAX_HISTORY * 2:
                 user_history[uid] = user_history[uid][-(MAX_HISTORY * 2):]
+            # Save current image for future context (only images, not videos)
+            if ext in (".jpg", ".jpeg", ".png", ".webp"):
+                user_images[uid].append(tmp_path)
+                if len(user_images[uid]) > MAX_IMAGES:
+                    # Remove oldest, clean up file
+                    old = user_images[uid].pop(0)
+                    try:
+                        os.unlink(old)
+                    except OSError:
+                        pass
+                tmp_path = None  # prevent cleanup since we're keeping it
 
         # Check if the response contains pointing data
         pointed_path = None
